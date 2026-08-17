@@ -3,16 +3,21 @@ import { assertUsableApiKey, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter, type ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { createHash } from 'node:crypto'
-import { createProvider, type Context as PiContext, type Model, type SimpleStreamOptions, type ThinkingLevelMap } from '@earendil-works/pi-ai'
-import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
+import { createProvider, type Context as PiContext, type Model, type SimpleStreamOptions, type ThinkingLevelMap, type ProviderStreams } from '@earendil-works/pi-ai'
+// Cloned (and minimized) from @earendil-works/pi-ai's openai-completions module.
+// See src/openai-completions.ts for the source URL + the only change (zenFetch).
+// The cloned copy re-declares AssistantMessageEventStream as a separate class
+// identity, so its stream functions are cast back to the package's types here.
+// Runtime behavior is identical; only the (private) class identity differs.
+import { stream as _piAgentStream, streamSimple as _piAgentStreamSimple, installZenUserAgent } from './openai-completions.js'
+const piAgentStream = _piAgentStream as unknown as ProviderStreams['stream']
+const piAgentStreamSimple = _piAgentStreamSimple as unknown as ProviderStreams['streamSimple']
 
 export const name = 'opencode-zen-free-provider'
 export const inject = ['llm']
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const FALLBACK_OPENCODE_VERSION = '1.18.18'
 
 const resolveOpenCodeVersion = async (): Promise<string> => {
   try {
@@ -21,9 +26,9 @@ const resolveOpenCodeVersion = async (): Promise<string> => {
     })
     return typeof payload.version === 'string' && payload.version.length > 0
       ? payload.version
-      : FALLBACK_OPENCODE_VERSION
+      : '1.18.18'
   } catch {
-    return FALLBACK_OPENCODE_VERSION
+    return '1.18.18'
   }
 }
 
@@ -50,25 +55,25 @@ const lastUserContent = (context: PiContext): string => {
   return ''
 }
 
-const zenApi = (() => {
-  const api = openAICompletionsApi()
+const zenApiHeaders = (model: Model<'openai-completions'>, context: PiContext, options: SimpleStreamOptions) => {
+  const sessionId = options.sessionId ?? 'dsh-session-unknown'
+  const requestSeed = `${sessionId}\0${lastUserContent(context)}`
   return {
-    ...api,
-    streamSimple: (model: Model<'openai-completions'>, context: PiContext, options: SimpleStreamOptions) => {
-      const sessionId = options.sessionId ?? 'dsh-session-unknown'
-      const requestSeed = `${sessionId}\0${lastUserContent(context)}`
-      const headers = {
-        ...model.headers,
-        'HTTP-Referer': 'https://opencode.ai',
-        'x-opencode-project': 'global',
-        'x-opencode-session': opencodeId('ses', sessionId),
-        'x-opencode-request': opencodeId('msg', requestSeed),
-        'x-opencode-client': 'cli',
-      }
-      return api.streamSimple({ ...model, headers }, context, options)
-    },
+    ...model.headers,
+    'HTTP-Referer': 'https://opencode.ai',
+    'x-opencode-project': 'global',
+    'x-opencode-session': opencodeId('ses', sessionId),
+    'x-opencode-request': opencodeId('msg', requestSeed),
+    'x-opencode-client': 'cli',
   }
-})()
+}
+
+const zenApi = {
+  stream: (model: Model<'openai-completions'>, context: PiContext, options: SimpleStreamOptions) =>
+    piAgentStream({ ...model, headers: zenApiHeaders(model, context, options) }, context, options),
+  streamSimple: (model: Model<'openai-completions'>, context: PiContext, options: SimpleStreamOptions) =>
+    piAgentStreamSimple({ ...model, headers: zenApiHeaders(model, context, options) }, context, options),
+}
 
 async function fetchJson(url: string, headers: Record<string, string>) {
   const controller = new AbortController()
@@ -87,6 +92,7 @@ async function fetchJson(url: string, headers: Record<string, string>) {
 export async function apply(ctx: Context): Promise<void> {
   const opencodeVersion = await resolveOpenCodeVersion()
   const opencodeUserAgent = `opencode/${opencodeVersion}`
+  installZenUserAgent(opencodeUserAgent)
   const [zen, modelsDev] = await Promise.all([
     fetchJson('https://opencode.ai/zen/v1/models', {
       'User-Agent': opencodeUserAgent,
