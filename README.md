@@ -8,6 +8,8 @@ OpenCode Zen Free provider for dsh.
 
 本插件可以将 OpenCode Zen 的免费模型接入 dsh 使用。插件启动时会从 OpenCode Zen 和 models.dev 同步模型目录、包含 Reasoning Effort 和所有元数据。
 
+其中 DeepSeek V4 Flash 额外支持到 1M 上下文。
+
 ## 安装
 
 从 npm 安装（预构建产物，推荐）：
