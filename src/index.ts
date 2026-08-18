@@ -119,7 +119,10 @@ export async function apply(ctx: Context): Promise<void> {
       const efforts = isRecord(option) && Array.isArray(option.values)
         ? option.values.filter((value): value is string => typeof value === 'string')
         : []
-      const thinkingLevelMap: ThinkingLevelMap = { off: 'none' }
+      // `off` is deliberately left unset (not 'none'): with no effort selected the
+      // transport then omits `reasoning_effort` entirely instead of forcing 'none',
+      // so OpenCode Zen keeps its own default thinking. ('none' would disable thinking.)
+      const thinkingLevelMap: ThinkingLevelMap = {}
       for (const level of ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const) {
         thinkingLevelMap[level] = efforts.length === 0 || efforts.includes(level) ? level : null
       }
