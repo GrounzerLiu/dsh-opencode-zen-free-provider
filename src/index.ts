@@ -69,11 +69,25 @@ const zenApiHeaders = (model: Model<'openai-completions'>, context: PiContext, o
   }
 }
 
+const normalizeReasoningContext = (model: Model<'openai-completions'>, context: PiContext): PiContext => {
+  if (!model.reasoning) return context
+  const messages = context.messages.map(message => {
+    if (message.role !== 'assistant') return message
+    const content = message.content.map(block =>
+      block.type === 'thinking' && block.thinking.trim().length > 0 && block.thinkingSignature === undefined
+        ? { ...block, thinkingSignature: 'reasoning_content' }
+        : block,
+    )
+    return content === message.content ? message : { ...message, content }
+  })
+  return messages.some((message, index) => message !== context.messages[index]) ? { ...context, messages } : context
+}
+
 const zenApi = {
   stream: (model: Model<'openai-completions'>, context: PiContext, options: SimpleStreamOptions) =>
-    piAgentStream({ ...model, headers: zenApiHeaders(model, context, options) }, context, options),
+    piAgentStream({ ...model, headers: zenApiHeaders(model, context, options) }, normalizeReasoningContext(model, context), options),
   streamSimple: (model: Model<'openai-completions'>, context: PiContext, options: SimpleStreamOptions) =>
-    piAgentStreamSimple({ ...model, headers: zenApiHeaders(model, context, options) }, context, options),
+    piAgentStreamSimple({ ...model, headers: zenApiHeaders(model, context, options) }, normalizeReasoningContext(model, context), options),
 }
 
 async function fetchJson(url: string, headers: Record<string, string>) {
@@ -115,6 +129,7 @@ export async function apply(ctx: Context): Promise<void> {
       const metadata = modelsById[id]
       if (!isRecord(metadata)) return []
       const baseCompat = getBuiltinModels('opencode').find(base => base.id === id)?.compat
+      const compat = baseCompat === undefined ? undefined : { ...baseCompat, requiresReasoningContentOnAssistantMessages: false }
 
       const option = (Array.isArray(metadata.reasoning_options) ? metadata.reasoning_options : [])
         .find(value => isRecord(value) && value.type === 'effort')
@@ -147,7 +162,7 @@ export async function apply(ctx: Context): Promise<void> {
         contextWindow: id === 'deepseek-v4-flash-free' ? 1_048_576
           : typeof limit?.context === 'number' ? limit.context : 1_048_576,
         maxTokens: typeof limit?.output === 'number' ? limit.output : 32_768,
-        ...(baseCompat ? { compat: baseCompat } : {}),
+        ...(compat ? { compat } : {}),
       }]
     })
   if (models.length === 0) throw new Error('no OpenCode Zen free models resolved')
