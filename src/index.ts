@@ -4,6 +4,7 @@ import { PiAiAdapter, type ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { createHash } from 'node:crypto'
 import { createProvider, type Context as PiContext, type Model, type SimpleStreamOptions, type ThinkingLevelMap, type ProviderStreams } from '@earendil-works/pi-ai'
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 // Cloned (and minimized) from @earendil-works/pi-ai's openai-completions module.
 // See src/openai-completions.ts for the source URL + the only change (zenFetch).
 // The cloned copy re-declares AssistantMessageEventStream as a separate class
@@ -113,6 +114,7 @@ export async function apply(ctx: Context): Promise<void> {
       const id = entry.id as string
       const metadata = modelsById[id]
       if (!isRecord(metadata)) return []
+      const baseCompat = getBuiltinModels('opencode').find(base => base.id === id)?.compat
 
       const option = (Array.isArray(metadata.reasoning_options) ? metadata.reasoning_options : [])
         .find(value => isRecord(value) && value.type === 'effort')
@@ -145,6 +147,7 @@ export async function apply(ctx: Context): Promise<void> {
         contextWindow: id === 'deepseek-v4-flash-free' ? 1_048_576
           : typeof limit?.context === 'number' ? limit.context : 1_048_576,
         maxTokens: typeof limit?.output === 'number' ? limit.output : 32_768,
+        ...(baseCompat ? { compat: baseCompat } : {}),
       }]
     })
   if (models.length === 0) throw new Error('no OpenCode Zen free models resolved')
