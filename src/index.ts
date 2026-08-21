@@ -1,7 +1,10 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { assertUsableApiKey, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
+import { assertUsableApiKey, resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
+import type { RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter, type ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import z from '@deepseek-ai/schemastery'
 import { createHash } from 'node:crypto'
 import { createProvider, type Context as PiContext, type Model, type SimpleStreamOptions, type ThinkingLevelMap, type ProviderStreams } from '@earendil-works/pi-ai'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
@@ -15,7 +18,18 @@ const piAgentStream = _piAgentStream as unknown as ProviderStreams['stream']
 const piAgentStreamSimple = _piAgentStreamSimple as unknown as ProviderStreams['streamSimple']
 
 export const name = 'opencode-zen-free-provider'
-export const inject = ['llm']
+export const inject = ['llm', 'settings']
+
+const NS = settingsNamespace('opencode-zen-free-provider')
+
+export interface Config {
+  /** Provider-owned model-request retry policy; omission uses normal defaults. */
+  retryPolicy?: RetryPolicyConfig
+}
+
+export const Config: z<Config> = z.object({
+  retryPolicy: RetryPolicySchema,
+})
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -148,7 +162,8 @@ async function fetchJson(url: string, headers: Record<string, string>) {
   }
 }
 
-export async function apply(ctx: Context): Promise<void> {
+export async function apply(ctx: Context, config: Config): Promise<void> {
+  let current: () => Config = () => config
   const opencodeVersion = await resolveOpenCodeVersion()
   const opencodeUserAgent = `opencode/${opencodeVersion}`
   installZenUserAgent(opencodeUserAgent)
@@ -218,7 +233,7 @@ export async function apply(ctx: Context): Promise<void> {
       displayName: 'OpenCode Zen Free',
       apiKeyEnv: credentialRef('OPENCODE_ZEN_FREE_API_KEY'),
       streamIdleTimeoutMs: 300_000,
-      retryPolicy: resolveRetryPolicy(undefined, `${name}: retryPolicy`),
+      retryPolicy: resolveRetryPolicy(current().retryPolicy, `${name}: retryPolicy`),
       piProvider: createProvider({
         id: name,
         name: 'OpenCodeZenFree',
@@ -244,4 +259,11 @@ export async function apply(ctx: Context): Promise<void> {
   })
 
   ctx.llm.registerAdapter([name], adapter)
+
+  installSettingsSection(ctx, NS, Config, config, {
+    setSource: (source) => {
+      current = source
+    },
+    onChange: () => {},
+  })
 }
