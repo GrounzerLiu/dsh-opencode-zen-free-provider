@@ -83,11 +83,55 @@ const normalizeReasoningContext = (model: Model<'openai-completions'>, context: 
   return messages.some((message, index) => message !== context.messages[index]) ? { ...context, messages } : context
 }
 
+// OpenCode Zen reports non-credential refusals (ended free promotions, region
+// blocks) over HTTP 401/403, and the harness classifies any 401/403 text as an
+// AUTH failure whose message the UI replaces with "API key is invalid" — hiding
+// the actual reason. Rewrite the Zen error envelope inside the terminal error
+// event's `errorMessage` (e.g. `401: {"type":"ModelError","message":"..."}`) to
+// `[opencode-zen <type>] <message>` before it reaches that classification.
+// Genuine `AuthError` envelopes are left untouched so real key failures still
+// surface as AUTH. The wire request and the transport's own error stay honest;
+// only this provider's presentation string changes.
+const rewriteZenRefusalMessage = (errorMessage: string): string => {
+  const start = errorMessage.indexOf('{')
+  const end = errorMessage.lastIndexOf('}')
+  if (start < 0 || end <= start) return errorMessage
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(errorMessage.slice(start, end + 1))
+  } catch {
+    return errorMessage
+  }
+  if (!isRecord(parsed)) return errorMessage
+  // Accept both the raw envelope (`{"type":"error","error":{...}}`) and the
+  // SDK-unwrapped inner object (`{"type":"ModelError","message":"..."}`).
+  const detail = parsed.type === 'error' && isRecord(parsed.error) ? parsed.error : parsed
+  if (typeof detail.message !== 'string') return errorMessage
+  if (detail.type === 'AuthError') return errorMessage
+  const type = typeof detail.type === 'string' ? detail.type : 'Error'
+  return `[opencode-zen ${type}] ${detail.message}`
+}
+
+interface ZenPushable {
+  push(event: unknown): void
+}
+
+const sanitizeZenStream = <S extends ZenPushable>(stream: S): S => {
+  const originalPush = stream.push.bind(stream)
+  stream.push = (event: unknown) => {
+    if (isRecord(event) && event.type === 'error' && isRecord(event.error) && typeof event.error.errorMessage === 'string') {
+      event.error.errorMessage = rewriteZenRefusalMessage(event.error.errorMessage)
+    }
+    originalPush(event)
+  }
+  return stream
+}
+
 const zenApi = {
   stream: (model: Model<'openai-completions'>, context: PiContext, options: SimpleStreamOptions) =>
-    piAgentStream({ ...model, headers: zenApiHeaders(model, context, options) }, normalizeReasoningContext(model, context), options),
+    sanitizeZenStream(piAgentStream({ ...model, headers: zenApiHeaders(model, context, options) }, normalizeReasoningContext(model, context), options)),
   streamSimple: (model: Model<'openai-completions'>, context: PiContext, options: SimpleStreamOptions) =>
-    piAgentStreamSimple({ ...model, headers: zenApiHeaders(model, context, options) }, normalizeReasoningContext(model, context), options),
+    sanitizeZenStream(piAgentStreamSimple({ ...model, headers: zenApiHeaders(model, context, options) }, normalizeReasoningContext(model, context), options)),
 }
 
 async function fetchJson(url: string, headers: Record<string, string>) {
