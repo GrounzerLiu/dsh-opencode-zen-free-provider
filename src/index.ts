@@ -218,7 +218,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         thinkingLevelMap,
         input: input.length > 0 ? input : ['text'],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: id === 'deepseek-v4-flash-free' ? 1_048_576
+        contextWindow: id === 'mimo-v2.5-free' ? 1_048_576
           : typeof limit?.context === 'number' ? limit.context : 1_048_576,
         maxTokens: typeof limit?.output === 'number' ? limit.output : 32_768,
         ...(compat ? { compat } : {}),
