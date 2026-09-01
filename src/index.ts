@@ -3,7 +3,9 @@ import { assertUsableApiKey, errorChain, resolveRetryPolicy, RetryPolicySchema }
 import type { RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter, type ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+// Type-only reference loads dsh-settings' `Context.settings` augmentation so
+// `ctx.settings.installSection` type-checks; no runtime import is needed.
+import type { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { createHash } from 'node:crypto'
 import { createProvider, type AuthContext, type Context as PiContext, type CredentialStore, type Model, type SimpleStreamOptions, type ThinkingLevelMap, type ProviderStreams } from '@earendil-works/pi-ai'
@@ -22,7 +24,7 @@ export const inject = ['llm', 'settings']
 
 const PROVIDER = name
 const DISPLAY_NAME = 'OpenCode Zen Free'
-const NS = settingsNamespace('opencode-zen-free-provider')
+const NS = 'opencode-zen-free-provider' as const
 const OPENCODE_VERSION_URL = 'https://data.jsdelivr.com/v1/packages/npm/opencode-ai/resolved'
 const OPENCODE_VERSION_FALLBACK = '1.18.18'
 
@@ -45,6 +47,22 @@ export const Config: z<Config> = z.object({
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** Order- and key-independent deep equality for the plain model-descriptor
+ * catalog (replaces the deepEqualJson export removed from dsh-settings). */
+const deepEqual = (a: unknown, b: unknown): boolean => {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false
+    return a.every((item, index) => deepEqual(item, b[index]))
+  }
+  const keysA = Object.keys(a as Record<string, unknown>)
+  const keysB = Object.keys(b as Record<string, unknown>)
+  if (keysA.length !== keysB.length) return false
+  return keysA.every((key) => deepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
+}
 
 const resolveOpenCodeVersion = async (): Promise<string> => {
   try {
@@ -307,7 +325,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ])
   ctx.llm.registerAdapter([PROVIDER], adapter)
 
-  installSettingsSection(ctx, NS, Config, config, {
+  // Current dsh-settings (0.1.2-alpha.2) API: installSection is a method on the
+  // ctx.settings service (the standalone installSettingsSection/settingsNamespace
+  // exports were removed in that version).
+  ctx.settings.installSection(ctx, NS, Config, config, {
     setSource: (source) => {
       current = source
     },
@@ -334,7 +355,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     if (next.length === 0) {
       throw new Error('no OpenCode Zen free models resolved; keeping the previous catalog')
     }
-    if (deepEqualJson(next, scanned)) return
+    if (deepEqual(next, scanned)) return
     scanned = next
     profiles = buildProfiles()
     ctx.logger.info('[%s] synced %d free model(s): %s', name, scanned.length, scanned.map(model => model.id).join(', '))
