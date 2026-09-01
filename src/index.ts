@@ -26,6 +26,11 @@ const NS = settingsNamespace('opencode-zen-free-provider')
 const OPENCODE_VERSION_URL = 'https://data.jsdelivr.com/v1/packages/npm/opencode-ai/resolved'
 const OPENCODE_VERSION_FALLBACK = '1.18.18'
 
+/** Primary credential ref declared on the profile; plus the legacy env name the
+ * predecessor plugin (dsh-opencode-zen) read, so an already-stored key under
+ * OPENCODE_GO_API_KEY keeps working without re-configuration. */
+const LEGACY_API_KEY_ENV = credentialRef('OPENCODE_GO_API_KEY')
+
 /** Envelope types that must stay AUTH-classified instead of being rewritten. */
 const AUTH_ERROR_TYPES = new Set(['AuthError', 'authentication_error', 'invalid_api_key', 'unauthorized'])
 
@@ -287,8 +292,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     resolveApiKey: async (_provider, profile) => {
       const credentials = ctx.get('credentials')
       if (credentials !== undefined) {
-        const hit = await credentials.resolve(profile.apiKeyEnv!)
-        if (hit !== undefined) return assertUsableApiKey(hit.value, name, String(profile.apiKeyEnv))
+        for (const ref of [profile.apiKeyEnv!, LEGACY_API_KEY_ENV]) {
+          const hit = await credentials.resolve(ref)
+          if (hit !== undefined) return assertUsableApiKey(hit.value, name, String(ref))
+        }
       }
       // OpenCode Zen accepts the public route without a user API key.
       return 'public'

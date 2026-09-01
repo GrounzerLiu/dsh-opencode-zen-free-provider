@@ -1,0 +1,10 @@
+# Normalize everything to LF; Windows autocrlf otherwise flags tsc output
+# as modified when it is byte-identical.
+* text=auto eol=lf
+
+*.js text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
